@@ -32,7 +32,7 @@ namespace HHG.GoogleSheets.Editor
                     continue;
                 }
 
-                ImportCSVToScriptableObjects(csv, type);
+                ImportCSVToScriptableObjects(csv, type, attr.Casing);
             }
 
             AssetDatabase.SaveAssets();
@@ -60,7 +60,7 @@ namespace HHG.GoogleSheets.Editor
             }
         }
 
-        private static void ImportCSVToScriptableObjects(string csv, System.Type soType)
+        private static void ImportCSVToScriptableObjects(string csv, System.Type type, Case casing)
         {
             string[] lines = csv.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
 
@@ -81,20 +81,20 @@ namespace HHG.GoogleSheets.Editor
                     continue;
                 }
 
-                ScriptableObject so = FindScriptableObjectByName(soType, name);
+                ScriptableObject scriptableObject = FindScriptableObjectByName(type, name);
 
-                if (so == null)
+                if (scriptableObject == null)
                 {
-                    Debug.LogWarning($"No ScriptableObject found for {soType.Name} named '{name}'");
+                    Debug.LogWarning($"No ScriptableObject found for {type.Name} named '{name}'");
                     continue;
                 }
 
-                ApplyFieldsRecursive(so, row, soType, so);
-                EditorUtility.SetDirty(so);
+                ApplyFieldsRecursive(scriptableObject, row, type, scriptableObject, casing);
+                EditorUtility.SetDirty(scriptableObject);
             }
         }
 
-        private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext)
+        private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext, Case casing)
         {
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
@@ -108,7 +108,14 @@ namespace HHG.GoogleSheets.Editor
 
                 if (attr != null)
                 {
-                    if (row.TryGetValue(attr.ColumnName, out string raw))
+                    string columnName = attr.ColumnName;
+
+                    if (string.IsNullOrEmpty(columnName))
+                    {
+                        columnName = casing.ToCase(field.Name);
+                    }
+
+                    if (row.TryGetValue(columnName, out string raw))
                     {
                         object value = ConvertValue(raw, field.FieldType, attr.TransformMethod, rootContext.GetType());
                         field.SetValue(instance, value);
@@ -120,7 +127,7 @@ namespace HHG.GoogleSheets.Editor
 
                     if (subObj != null)
                     {
-                        ApplyFieldsRecursive(subObj, row, field.FieldType, rootContext);
+                        ApplyFieldsRecursive(subObj, row, field.FieldType, rootContext, casing);
                     }
                 }
             }
@@ -151,6 +158,24 @@ namespace HHG.GoogleSheets.Editor
                 Debug.LogWarning($"Failed to convert '{raw}' to {targetType.Name}");
                 return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
             }
+        }
+
+        private static Dictionary<string, MethodInfo> GetTransformMethods(System.Type type)
+        {
+            Dictionary<string, MethodInfo> map = new Dictionary<string, MethodInfo>();
+
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                foreach (SheetTransformAttribute attr in method.GetCustomAttributes<SheetTransformAttribute>())
+                {
+                    if (!string.IsNullOrEmpty(attr.ColumnName) && !map.ContainsKey(attr.ColumnName))
+                    {
+                        map[attr.ColumnName] = method;
+                    }
+                }
+            }
+
+            return map;
         }
 
         private static IEnumerable<System.Type> GetAllScriptableObjectSheetTypes()

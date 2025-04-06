@@ -1,10 +1,8 @@
 ﻿using HHG.GoogleSheets.Runtime;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Reflection;
-using System.Security.Cryptography;
 using UnityEditor;
 using UnityEngine;
 
@@ -12,17 +10,22 @@ namespace HHG.GoogleSheets.Editor
 {
     public class SheetImporterEditor : EditorWindow
     {
-        [MenuItem("Tools/Import All Sheets")]
-        public static void ImportAllSheets()
+        [MenuItem("| Half Human Games|/Tools/Import Google Sheets")]
+        public static void ImportSheets()
         {
-            foreach (var type in GetAllSheetTypes())
+            foreach (System.Type type in GetAllScriptableObjectSheetTypes())
             {
-                var attr = type.GetCustomAttribute<SheetAttribute>();
-                if (attr == null) continue;
+                SheetAttribute attr = type.GetCustomAttribute<SheetAttribute>();
+
+                if (attr == null)
+                {
+                    continue;
+                }
 
                 Debug.Log($"Importing sheet for {type.Name}: {attr.Gid}");
 
                 string csv = DownloadSheetCSV(attr.SpreadsheetId, attr.Gid);
+
                 if (string.IsNullOrEmpty(csv))
                 {
                     Debug.LogError($"Failed to download sheet for {type.Name}");
@@ -36,41 +39,50 @@ namespace HHG.GoogleSheets.Editor
             Debug.Log("✅ All sheets imported!");
         }
 
-        static string DownloadSheetCSV(string spreadsheetId, string gid)
+        private static string DownloadSheetCSV(string spreadsheetId, string gid)
         {
             try
             {
                 string url = $"https://docs.google.com/spreadsheets/d/{spreadsheetId}/export?format=csv";
+
                 if (!string.IsNullOrEmpty(gid))
                 {
-                    url += $"&gid={Uri.EscapeDataString(gid)}";
+                    url += $"&gid={System.Uri.EscapeDataString(gid)}";
                 }
 
                 using WebClient client = new WebClient();
                 return client.DownloadString(url);
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 Debug.LogError($"Error downloading Google Sheet: {ex.Message}");
                 return null;
             }
         }
 
-        static void ImportCSVToScriptableObjects(string csv, Type soType)
+        private static void ImportCSVToScriptableObjects(string csv, System.Type soType)
         {
-            var lines = csv.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length < 2) return;
+            string[] lines = csv.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
 
-            var headers = lines[0].Split(',').Select(h => h.Trim()).ToArray();
+            if (lines.Length < 2)
+            {
+                return;
+            }
+
+            string[] headers = lines[0].Split(',').Select(h => h.Trim()).ToArray();
 
             for (int i = 1; i < lines.Length; i++)
             {
-                var values = lines[i].Split(',').Select(v => v.Trim()).ToArray();
-                var row = headers.Zip(values, (k, v) => new { k, v }).ToDictionary(x => x.k, x => x.v);
+                string[] values = lines[i].Split(',').Select(v => v.Trim()).ToArray();
+                Dictionary<string, string> row = headers.Zip(values, (k, v) => new KeyValuePair<string, string>(k, v)).ToDictionary(x => x.Key, x => x.Value);
 
-                if (!row.TryGetValue("Name", out string name) || string.IsNullOrEmpty(name)) continue;
+                if (!row.TryGetValue("Name", out string name) || string.IsNullOrEmpty(name))
+                {
+                    continue;
+                }
 
-                var so = FindSOByName(soType, name);
+                ScriptableObject so = FindScriptableObjectByName(soType, name);
+
                 if (so == null)
                 {
                     Debug.LogWarning($"No ScriptableObject found for {soType.Name} named '{name}'");
@@ -82,11 +94,18 @@ namespace HHG.GoogleSheets.Editor
             }
         }
 
-        static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, Type type, object rootContext)
+        private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext)
         {
-            foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
-                var attr = field.GetCustomAttribute<SheetFieldAttribute>();
+                // Skip any fields of type UnityEngine.Object
+                if (field.FieldType.IsAssignableFrom(typeof(Object)))
+                {
+                    continue;
+                }
+
+                SheetFieldAttribute attr = field.GetCustomAttribute<SheetFieldAttribute>();
+
                 if (attr != null)
                 {
                     if (row.TryGetValue(attr.ColumnName, out string raw))
@@ -98,6 +117,7 @@ namespace HHG.GoogleSheets.Editor
                 else if (!field.FieldType.IsPrimitive && !field.FieldType.IsEnum && field.FieldType != typeof(string))
                 {
                     object subObj = field.GetValue(instance);
+
                     if (subObj != null)
                     {
                         ApplyFieldsRecursive(subObj, row, field.FieldType, rootContext);
@@ -106,11 +126,12 @@ namespace HHG.GoogleSheets.Editor
             }
         }
 
-        static object ConvertValue(string raw, Type targetType, string transformMethod, Type contextType)
+        private static object ConvertValue(string raw, System.Type targetType, string transformMethod, System.Type contextType)
         {
             if (!string.IsNullOrEmpty(transformMethod))
             {
-                var method = contextType.GetMethod(transformMethod, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                MethodInfo method = contextType.GetMethod(transformMethod, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
                 if (method != null)
                 {
                     return method.Invoke(null, new object[] { raw });
@@ -123,37 +144,36 @@ namespace HHG.GoogleSheets.Editor
 
             try
             {
-                return Convert.ChangeType(raw, targetType);
+                return System.Convert.ChangeType(raw, targetType);
             }
             catch
             {
                 Debug.LogWarning($"Failed to convert '{raw}' to {targetType.Name}");
-                return targetType.IsValueType ? Activator.CreateInstance(targetType) : null;
+                return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
             }
         }
 
-
-        static IEnumerable<Type> GetAllSheetTypes()
+        private static IEnumerable<System.Type> GetAllScriptableObjectSheetTypes()
         {
-            return AppDomain.CurrentDomain.GetAssemblies()
-                .SelectMany(a => a.GetTypes())
-                .Where(t => typeof(ScriptableObject).IsAssignableFrom(t)
-                    && t.GetCustomAttribute<SheetAttribute>() != null);
+            return System.AppDomain.CurrentDomain.GetAssemblies().SelectMany((Assembly a) => a.GetTypes()).Where((System.Type t) => typeof(ScriptableObject).IsAssignableFrom(t) && t.GetCustomAttribute<SheetAttribute>() != null);
         }
 
-        static ScriptableObject FindSOByName(Type type, string name)
+        private static ScriptableObject FindScriptableObjectByName(System.Type type, string name)
         {
             string[] guids = AssetDatabase.FindAssets($"t:{type.Name}");
+
             foreach (string guid in guids)
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
-                var so = AssetDatabase.LoadAssetAtPath(path, type) as ScriptableObject;
+                ScriptableObject so = AssetDatabase.LoadAssetAtPath(path, type) as ScriptableObject;
 
                 if (so.name == name)
+                {
                     return so;
+                }
             }
 
             return null;
         }
-    } 
+    }
 }

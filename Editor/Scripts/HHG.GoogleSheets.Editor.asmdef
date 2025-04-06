@@ -1,0 +1,19 @@
+{
+    "name": "HHG.GoogleSheets.Editor",
+    "rootNamespace": "HHG.GoogleSheets.Editor",
+    "references": [
+        "GUID:58e50624d553f054bb18bfdd8f73e24c",
+        "GUID:891ccb33f328c9f4688c97b070715a1d"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

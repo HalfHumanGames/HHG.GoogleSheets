@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace HHG.GoogleSheets.Editor
 {
-    public class SheetImporterEditor : EditorWindow
+    public class SheetImporterTool : EditorWindow
     {
         [MenuItem("| Half Human Games|/Tools/Import Google Sheets")]
         public static void ImportSheets()

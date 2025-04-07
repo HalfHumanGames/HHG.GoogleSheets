@@ -1,4 +1,5 @@
-﻿using HHG.GoogleSheets.Runtime;
+﻿using HHG.Common.Runtime;
+using HHG.GoogleSheets.Runtime;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -10,7 +11,7 @@ namespace HHG.GoogleSheets.Editor
 {
     public class SheetImporterTool : EditorWindow
     {
-        [MenuItem("| Half Human Games|/Tools/Import Google Sheets")]
+        [MenuItem("| Half Human Games |/Tools/Import Google Sheets")]
         public static void ImportSheets()
         {
             foreach (System.Type type in GetAllScriptableObjectSheetTypes())
@@ -22,10 +23,9 @@ namespace HHG.GoogleSheets.Editor
                     continue;
                 }
 
-                Debug.Log($"Importing sheet for {type.Name}: {attr.Gid}");
+                Debug.Log($"Importing sheet for {type.Name}");
 
                 string csv = DownloadSheetCSV(attr.SpreadsheetId, attr.Gid);
-
                 if (string.IsNullOrEmpty(csv))
                 {
                     Debug.LogError($"Failed to download sheet for {type.Name}");
@@ -62,18 +62,18 @@ namespace HHG.GoogleSheets.Editor
 
         private static void ImportCSVToScriptableObjects(string csv, System.Type type, Case casing)
         {
-            string[] lines = csv.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
+            List<List<string>> rows = CsvUtil.Parse(csv);
 
-            if (lines.Length < 2)
+            if (rows.Count < 2)
             {
                 return;
             }
 
-            string[] headers = lines[0].Split(',').Select(h => h.Trim()).ToArray();
+            List<string> headers = rows[0];
 
-            for (int i = 1; i < lines.Length; i++)
+            for (int i = 1; i < rows.Count; i++)
             {
-                string[] values = lines[i].Split(',').Select(v => v.Trim()).ToArray();
+                List<string> values = rows[i];
                 Dictionary<string, string> row = headers.Zip(values, (k, v) => new KeyValuePair<string, string>(k, v)).ToDictionary(x => x.Key, x => x.Value);
 
                 if (!row.TryGetValue("Name", out string name) || string.IsNullOrEmpty(name))
@@ -98,7 +98,6 @@ namespace HHG.GoogleSheets.Editor
         {
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
-                // Skip any fields of type UnityEngine.Object
                 if (field.FieldType.IsAssignableFrom(typeof(Object)))
                 {
                     continue;
@@ -117,11 +116,11 @@ namespace HHG.GoogleSheets.Editor
 
                     if (row.TryGetValue(columnName, out string raw))
                     {
-                        object value = ConvertValue(raw, field.FieldType, attr.TransformMethod, rootContext.GetType());
+                        object value = ConvertValue(columnName, raw, field.FieldType, attr.TransformMethod, rootContext.GetType());
                         field.SetValue(instance, value);
                     }
                 }
-                else if (!field.FieldType.IsPrimitive && !field.FieldType.IsEnum && field.FieldType != typeof(string))
+                else if (!field.FieldType.IsPrimitive && !field.FieldType.IsEnum && field.FieldType != typeof(string) && !typeof(Object).IsAssignableFrom(field.FieldType))
                 {
                     object subObj = field.GetValue(instance);
 
@@ -133,49 +132,63 @@ namespace HHG.GoogleSheets.Editor
             }
         }
 
-        private static object ConvertValue(string raw, System.Type targetType, string transformMethod, System.Type contextType)
+        private static object ConvertValue(string columnName, string input, System.Type targetType, string transformMethod, System.Type contextType)
         {
-            if (!string.IsNullOrEmpty(transformMethod))
-            {
-                MethodInfo method = contextType.GetMethod(transformMethod, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            MethodInfo method = !string.IsNullOrEmpty(transformMethod) ?
+                contextType.GetMethod(transformMethod, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) :
+                FindTransformMethodByColumn(contextType, columnName);
 
-                if (method != null)
+            if (method != null)
+            {
+                try
                 {
-                    return method.Invoke(null, new object[] { raw });
+                    return method.Invoke(null, new object[] { input });
                 }
-                else
+                catch (System.Exception e)
                 {
-                    Debug.LogWarning($"Transformer method '{transformMethod}' not found on {contextType.Name}.");
+                    Debug.LogError($"Failed to convert column '{columnName}' input '{input}' to {targetType.Name}: {e.Message}");
+                    return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
                 }
             }
 
             try
             {
-                return System.Convert.ChangeType(raw, targetType);
+                return System.Convert.ChangeType(input, targetType);
             }
-            catch
+            catch (System.Exception e)
             {
-                Debug.LogWarning($"Failed to convert '{raw}' to {targetType.Name}");
+                Debug.LogError($"Failed to convert column '{columnName}' input '{input}' to {targetType.Name}: {e.Message}");
                 return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
             }
         }
 
-        private static Dictionary<string, MethodInfo> GetTransformMethods(System.Type type)
+        private static MethodInfo FindTransformMethodByColumn(System.Type contextType, string columnName)
         {
-            Dictionary<string, MethodInfo> map = new Dictionary<string, MethodInfo>();
+            MethodInfo[] methods = contextType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
 
-            foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            MethodInfo method = methods.FirstOrDefault(m => m.GetCustomAttribute<SheetTransformAttribute>()?.ColumnName == columnName);
+
+            if (method != null)
             {
-                foreach (SheetTransformAttribute attr in method.GetCustomAttributes<SheetTransformAttribute>())
+                return method;
+            }
+
+            foreach (FieldInfo field in contextType.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+            {
+                if (field.FieldType.IsPrimitive || field.FieldType.IsEnum || field.FieldType == typeof(string) || typeof(Object).IsAssignableFrom(field.FieldType))
                 {
-                    if (!string.IsNullOrEmpty(attr.ColumnName) && !map.ContainsKey(attr.ColumnName))
-                    {
-                        map[attr.ColumnName] = method;
-                    }
+                    continue;
+                }
+
+                method = FindTransformMethodByColumn(field.FieldType, columnName);
+
+                if (method != null)
+                {
+                    return method;
                 }
             }
 
-            return map;
+            return null;
         }
 
         private static IEnumerable<System.Type> GetAllScriptableObjectSheetTypes()

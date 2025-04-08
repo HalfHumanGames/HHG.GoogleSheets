@@ -35,6 +35,8 @@ namespace HHG.GoogleSheets.Editor
                 ImportCSVToScriptableObjects(csv, type, attr.Casing);
             }
 
+            InvokeSheetImportedCallbacks();
+
             AssetDatabase.SaveAssets();
             Debug.Log("✅ All sheets imported!");
         }
@@ -207,6 +209,20 @@ namespace HHG.GoogleSheets.Editor
             }
 
             return null;
+        }
+
+        private static void InvokeSheetImportedCallbacks()
+        {
+            foreach (System.Type type in System.AppDomain.CurrentDomain.GetAssemblies().SelectMany(a => a.GetTypes()))
+            {
+                foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    if (method.GetCustomAttribute<SheetImportedCallbackAttribute>() != null)
+                    {
+                        method.Invoke(null, null);
+                    }
+                }
+            }
         }
     }
 }

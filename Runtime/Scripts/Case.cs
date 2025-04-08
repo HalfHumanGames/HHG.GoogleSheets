@@ -4,7 +4,7 @@ using UnityEditor;
 
 namespace HHG.GoogleSheets.Runtime
 {
-    public enum NameCase
+    public enum Case
     {
         None,
         Pascal,
@@ -15,23 +15,23 @@ namespace HHG.GoogleSheets.Runtime
 
     public static class CaseExtensions
     {
-        public static string ToCase(this NameCase casing, string input)
+        public static string ToCase(this Case casing, string input)
         {
             switch (casing)
             {
-                case NameCase.None:
+                case Case.None:
                     return input;
 
-                case NameCase.Pascal:
+                case Case.Pascal:
                     return ToPascalCase(input);
 
-                case NameCase.Title:
+                case Case.Title:
                     return ToTitleCase(input);
 
-                case NameCase.Snake:
+                case Case.Snake:
                     return ToSnakeCase(input);
 
-                case NameCase.Nicified:
+                case Case.Nicified:
                     return ObjectNames.NicifyVariableName(input);
 
                 default:

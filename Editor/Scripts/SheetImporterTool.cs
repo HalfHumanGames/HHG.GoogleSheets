@@ -60,7 +60,7 @@ namespace HHG.GoogleSheets.Editor
             }
         }
 
-        private static void ImportCSVToScriptableObjects(string csv, System.Type type, NameCase casing)
+        private static void ImportCSVToScriptableObjects(string csv, System.Type type, Case casing)
         {
             List<List<string>> rows = CsvUtil.Parse(csv);
 
@@ -94,15 +94,10 @@ namespace HHG.GoogleSheets.Editor
             }
         }
 
-        private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext, NameCase casing)
+        private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext, Case casing)
         {
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
-                if (field.FieldType.IsAssignableFrom(typeof(Object)))
-                {
-                    continue;
-                }
-
                 SheetFieldAttribute attr = field.GetCustomAttribute<SheetFieldAttribute>();
 
                 if (attr != null)

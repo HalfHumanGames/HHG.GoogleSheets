@@ -7,9 +7,9 @@ namespace HHG.GoogleSheets.Runtime
     {
         public string SpreadsheetId { get; }
         public string Gid { get; }
-        public Case Casing { get; }
+        public NameCase Casing { get; }
 
-        public SheetAttribute(string spreadsheetId, string gid = null, Case casing = Case.None)
+        public SheetAttribute(string spreadsheetId, string gid = null, NameCase casing = NameCase.None)
         {
             SpreadsheetId = spreadsheetId;
             Gid = gid;

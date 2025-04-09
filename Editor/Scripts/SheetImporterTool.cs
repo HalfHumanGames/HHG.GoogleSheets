@@ -34,8 +34,6 @@ namespace HHG.GoogleSheets.Editor
                     continue;
                 }
 
-                //Debug.Log($"Csv file contents:\n{csv}");
-
                 ImportCSVToScriptableObjects(csv, type, attr.Casing);
             }
 
@@ -76,11 +74,14 @@ namespace HHG.GoogleSheets.Editor
             }
 
             List<string> headers = rows[0];
+            Dictionary<string, string> row = new Dictionary<string, string>();
+            Dictionary<string, int> arrayTracker = new Dictionary<string, int>();
 
             for (int i = 1; i < rows.Count; i++)
             {
-                List<string> values = rows[i];
-                Dictionary<string, string> row = headers.Zip(values, (k, v) => new KeyValuePair<string, string>(k, v)).ToDictionary(x => x.Key, x => x.Value);
+                row.Clear();
+                row.AddRange(headers.Zip(rows[i], (k, v) => new KeyValuePair<string, string>(k, v)));
+                arrayTracker.Clear();
 
                 if (!row.TryGetValue("Name", out string name) || string.IsNullOrEmpty(name))
                 {
@@ -95,12 +96,12 @@ namespace HHG.GoogleSheets.Editor
                     continue;
                 }
 
-                ApplyFieldsRecursive(scriptableObject, row, type, scriptableObject, casing);
+                ApplyFieldsRecursive(scriptableObject, row, type, scriptableObject, casing, arrayTracker);
                 EditorUtility.SetDirty(scriptableObject);
             }
         }
 
-        private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext, Case casing)
+        private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext, Case casing, Dictionary<string, int> arrayTracker)
         {
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
@@ -108,41 +109,39 @@ namespace HHG.GoogleSheets.Editor
 
                 if (attr != null)
                 {
-                    string columnName = attr.ColumnName;
+                    string columnName = string.IsNullOrEmpty(attr.ColumnName) ? casing.ToCase(field.Name) : attr.ColumnName;
+                    int index = arrayTracker.GetValueOrDefault(columnName);
+                    bool increment = false;
 
-                    if (string.IsNullOrEmpty(columnName))
+                    if (row.TryGetValue(columnName, out string contents) ||
+                       (increment = row.TryGetValue($"{columnName} {index}", out contents)))
                     {
-                        columnName = casing.ToCase(field.Name);
-                    }
-
-                    if (row.TryGetValue(columnName, out string raw))
-                    {
-                        object value = ConvertValue(columnName, raw, field.FieldType, attr.TransformMethod, rootContext.GetType());
+                        object value = ConvertValue(columnName, contents, field.FieldType, attr.TransformMethod, rootContext.GetType());
                         field.SetValue(instance, value);
+                        
+                        if (increment)
+                        {
+                            arrayTracker[columnName] = index + 1;
+                        }
                     }
                 }
-                else if (IsValidFieldType(field.FieldType))
+                else if (IsValidFieldType(field.FieldType) && field.GetValue(instance) is object obj)
                 {
-                    object subObj = field.GetValue(instance);
-
-                    if (subObj != null)
+                    if (obj is IEnumerable enumerable && (field.FieldType.GetElementType() ?? field.FieldType.GetGenericArguments().FirstOrDefault()) != null)
                     {
-                        if (subObj is IEnumerable enumerable && (field.FieldType.GetElementType() ?? field.FieldType.GetGenericArguments().FirstOrDefault()) != null)
+                        foreach (object item in enumerable)
                         {
-                            foreach (object item in enumerable)
+                            if (item is null)
                             {
-                                if (item is null)
-                                {
-                                    continue;
-                                }
-
-                                ApplyFieldsRecursive(item, row, item.GetType(), rootContext, casing);
+                                continue;
                             }
+
+                            ApplyFieldsRecursive(item, row, item.GetType(), rootContext, casing, arrayTracker);
                         }
-                        else
-                        {
-                            ApplyFieldsRecursive(subObj, row, field.FieldType, rootContext, casing);
-                        }
+                    }
+                    else
+                    {
+                        ApplyFieldsRecursive(obj, row, field.FieldType, rootContext, casing, arrayTracker);
                     }
                 }
             }

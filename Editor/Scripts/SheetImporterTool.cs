@@ -1,5 +1,6 @@
 ﻿using HHG.Common.Runtime;
 using HHG.GoogleSheets.Runtime;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -26,11 +27,14 @@ namespace HHG.GoogleSheets.Editor
                 Debug.Log($"Importing sheet for {type.Name}");
 
                 string csv = DownloadSheetCSV(attr.SpreadsheetId, attr.Gid);
+
                 if (string.IsNullOrEmpty(csv))
                 {
                     Debug.LogError($"Failed to download sheet for {type.Name}");
                     continue;
                 }
+
+                //Debug.Log($"Csv file contents:\n{csv}");
 
                 ImportCSVToScriptableObjects(csv, type, attr.Casing);
             }
@@ -117,13 +121,28 @@ namespace HHG.GoogleSheets.Editor
                         field.SetValue(instance, value);
                     }
                 }
-                else if (!field.FieldType.IsPrimitive && !field.FieldType.IsEnum && field.FieldType != typeof(string) && !typeof(Object).IsAssignableFrom(field.FieldType))
+                else if (IsValidFieldType(field.FieldType))
                 {
                     object subObj = field.GetValue(instance);
 
                     if (subObj != null)
                     {
-                        ApplyFieldsRecursive(subObj, row, field.FieldType, rootContext, casing);
+                        if (subObj is IEnumerable enumerable && (field.FieldType.GetElementType() ?? field.FieldType.GetGenericArguments().FirstOrDefault()) != null)
+                        {
+                            foreach (object item in enumerable)
+                            {
+                                if (item is null)
+                                {
+                                    continue;
+                                }
+
+                                ApplyFieldsRecursive(item, row, item.GetType(), rootContext, casing);
+                            }
+                        }
+                        else
+                        {
+                            ApplyFieldsRecursive(subObj, row, field.FieldType, rootContext, casing);
+                        }
                     }
                 }
             }
@@ -133,7 +152,7 @@ namespace HHG.GoogleSheets.Editor
         {
             MethodInfo method = !string.IsNullOrEmpty(transformMethod) ?
                 contextType.GetMethod(transformMethod, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) :
-                FindTransformMethodByColumn(contextType, columnName);
+                FindTransformMethodByColumn(contextType, columnName) ?? FindTransformMethodByFieldType(contextType, targetType);
 
             if (method != null)
             {
@@ -157,13 +176,27 @@ namespace HHG.GoogleSheets.Editor
                 Debug.LogError($"Failed to convert column '{columnName}' input '{input}' to {targetType.Name}: {e.Message}");
                 return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
             }
-        }
+        } 
 
         private static MethodInfo FindTransformMethodByColumn(System.Type contextType, string columnName)
         {
+            return FindTransformMethod(contextType, attr => attr.ColumnName == columnName);
+        }
+
+        private static MethodInfo FindTransformMethodByFieldType(System.Type contextType, System.Type targetType)
+        {
+            return FindTransformMethod(contextType, attr => attr.FieldType == targetType);
+        }
+
+        private static MethodInfo FindTransformMethod(System.Type contextType, System.Func<SheetTransformAttribute, bool> predicate)
+        {
             MethodInfo[] methods = contextType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
 
-            MethodInfo method = methods.FirstOrDefault(m => m.GetCustomAttribute<SheetTransformAttribute>()?.ColumnName == columnName);
+            MethodInfo method = methods.FirstOrDefault(m =>
+            {
+                SheetTransformAttribute attribute = m.GetCustomAttribute<SheetTransformAttribute>();
+                return attribute != null && predicate(attribute);
+            });
 
             if (method != null)
             {
@@ -172,12 +205,12 @@ namespace HHG.GoogleSheets.Editor
 
             foreach (FieldInfo field in contextType.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
             {
-                if (field.FieldType.IsPrimitive || field.FieldType.IsEnum || field.FieldType == typeof(string) || typeof(Object).IsAssignableFrom(field.FieldType))
+                if (!IsValidFieldType(field.FieldType))
                 {
                     continue;
                 }
 
-                method = FindTransformMethodByColumn(field.FieldType, columnName);
+                method = FindTransformMethod(field.FieldType, predicate);
 
                 if (method != null)
                 {
@@ -186,6 +219,12 @@ namespace HHG.GoogleSheets.Editor
             }
 
             return null;
+        }
+
+        private static bool IsValidFieldType(System.Type fieldType)
+        {
+            return !fieldType.IsPrimitive && !fieldType.IsEnum && fieldType != typeof(string) && !typeof(Object).IsAssignableFrom(fieldType) && 
+                  ((fieldType.GetElementType() ?? fieldType.GetGenericArguments().FirstOrDefault()) is not System.Type subType || IsValidFieldType(subType));
         }
 
         private static IEnumerable<System.Type> GetAllScriptableObjectSheetTypes()

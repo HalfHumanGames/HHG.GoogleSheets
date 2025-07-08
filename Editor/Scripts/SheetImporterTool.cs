@@ -12,10 +12,57 @@ namespace HHG.GoogleSheets.Editor
 {
     public class SheetImporterTool : EditorWindow
     {
-        [MenuItem("| Half Human Games |/Tools/Import Google Sheets")]
-        public static void ImportSheets()
+        private static HashSet<System.Type> loaded = new HashSet<System.Type>();
+        private static Dictionary<string, ScriptableObject> cache = new Dictionary<string, ScriptableObject>();
+
+        private struct Sheet
         {
-            foreach (System.Type type in GetAllScriptableObjectSheetTypes())
+            public string SpreadsheetId;
+            public string Gid;
+
+            public Sheet(string spreadsheetId, string gid)
+            {
+                SpreadsheetId = spreadsheetId;
+                Gid = gid;
+            }
+
+            public override bool Equals(object other)
+            {
+                return other is Sheet import && SpreadsheetId == import.SpreadsheetId && Gid == import.Gid;
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = 17;
+                    hash = hash * 23 + (SpreadsheetId != null ? SpreadsheetId.GetHashCode() : 0);
+                    hash = hash * 23 + (Gid != null ? Gid.GetHashCode() : 0);
+                    return hash;
+                }
+            }
+        }
+
+        [MenuItem("| Half Human Games |/Tools/Import Selected Google Sheet(s)")]
+        public static void ImportSelectedSheets()
+        {
+            ImportSheetHelper(GetSelectedScriptableObjectSheetTypes());
+        }
+
+        [MenuItem("| Half Human Games |/Tools/Import All Google Sheets")]
+        public static void ImportAllSheets()
+        {
+            ImportSheetHelper(GetAllScriptableObjectSheetTypes());
+        }
+
+        private static void ImportSheetHelper(IEnumerable<System.Type> types)
+        {
+            loaded.Clear();
+            cache.Clear();
+
+            HashSet<Sheet> imported = new HashSet<Sheet>();
+
+            foreach (System.Type type in types)
             {
                 SheetAttribute attr = type.GetCustomAttribute<SheetAttribute>();
 
@@ -35,12 +82,17 @@ namespace HHG.GoogleSheets.Editor
                 }
 
                 ImportCSVToScriptableObjects(csv, type, attr.Casing);
+
+                imported.Add(new Sheet(attr.SpreadsheetId, attr.Gid));
             }
 
-            InvokeSheetImportedCallbacks();
+            foreach (Sheet sheet in imported)
+            {
+                InvokeSheetImportedCallbacks(sheet.SpreadsheetId, sheet.Gid);
+            }
 
             AssetDatabase.SaveAssets();
-            Debug.Log("✅ All sheets imported!");
+            Debug.Log("✅ All Google Sheets imported!");
         }
 
         private static string DownloadSheetCSV(string spreadsheetId, string gid)
@@ -117,8 +169,8 @@ namespace HHG.GoogleSheets.Editor
                        (increment = row.TryGetValue($"{columnName} {index}", out contents)))
                     {
                         object value = ConvertValue(columnName, contents, field.FieldType, attr.TransformMethod, rootContext.GetType());
-                        field.SetValue(instance, value);
-                        
+                        SetValue(columnName, contents, field.FieldType, attr.AdapterMethod, rootContext.GetType(), field, instance, value);
+
                         if (increment)
                         {
                             arrayTracker[columnName] = index + 1;
@@ -151,7 +203,7 @@ namespace HHG.GoogleSheets.Editor
         {
             MethodInfo method = !string.IsNullOrEmpty(transformMethod) ?
                 contextType.GetMethod(transformMethod, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) :
-                FindTransformMethodByColumn(contextType, columnName) ?? FindTransformMethodByFieldType(contextType, targetType);
+                FindMethodByColumnName<SheetTransformAttribute>(contextType, columnName) ?? FindMethodByFieldType<SheetTransformAttribute>(contextType, targetType);
 
             if (method != null)
             {
@@ -165,35 +217,67 @@ namespace HHG.GoogleSheets.Editor
                     return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
                 }
             }
-
-            try
+            else
             {
-                return System.Convert.ChangeType(input, targetType);
+                try
+                {
+                    return System.Convert.ChangeType(input, targetType);
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"Failed to convert column '{columnName}' input '{input}' to {targetType.Name}: {e.Message}");
+                    return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
+                }
             }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"Failed to convert column '{columnName}' input '{input}' to {targetType.Name}: {e.Message}");
-                return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
-            }
-        } 
-
-        private static MethodInfo FindTransformMethodByColumn(System.Type contextType, string columnName)
-        {
-            return FindTransformMethod(contextType, attr => attr.ColumnName == columnName);
         }
 
-        private static MethodInfo FindTransformMethodByFieldType(System.Type contextType, System.Type targetType)
+        private static void SetValue(string columnName, string input, System.Type targetType, string adapterMethod, System.Type contextType, FieldInfo field, object instance, object value)
         {
-            return FindTransformMethod(contextType, attr => attr.FieldType == targetType);
+            MethodInfo method = !string.IsNullOrEmpty(adapterMethod) ?
+                contextType.GetMethod(adapterMethod, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) :
+                FindMethodByColumnName<SheetAdapterAttribute>(contextType, columnName) ?? FindMethodByFieldType<SheetAdapterAttribute>(contextType, targetType);
+
+            if (method != null)
+            {
+                try
+                {
+                    method.Invoke(null, new object[] { instance, value });
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"Failed to convert column '{columnName}' input '{input}' to {targetType.Name}: {e.Message}");
+                }
+            }
+            else
+            {
+                try
+                {
+                    field.SetValue(instance, value);
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"Failed to convert column '{columnName}' input '{input}' to {targetType.Name}: {e.Message}");
+                }
+            }
         }
 
-        private static MethodInfo FindTransformMethod(System.Type contextType, System.Func<SheetTransformAttribute, bool> predicate)
+        private static MethodInfo FindMethodByColumnName<T>(System.Type contextType, string columnName) where T : System.Attribute, ISheetMethod
+        {
+            return FindMethod<T>(contextType, attr => attr.ColumnName == columnName);
+        }
+
+        private static MethodInfo FindMethodByFieldType<T>(System.Type contextType, System.Type targetType) where T : System.Attribute, ISheetMethod
+        {
+            return FindMethod<T>(contextType, attr => attr.FieldType == targetType);
+        }
+
+        private static MethodInfo FindMethod<T>(System.Type contextType, System.Func<T, bool> predicate) where T : System.Attribute, ISheetMethod
         {
             MethodInfo[] methods = contextType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
 
             MethodInfo method = methods.FirstOrDefault(m =>
             {
-                SheetTransformAttribute attribute = m.GetCustomAttribute<SheetTransformAttribute>();
+                T attribute = m.GetCustomAttribute<T>();
                 return attribute != null && predicate(attribute);
             });
 
@@ -209,7 +293,7 @@ namespace HHG.GoogleSheets.Editor
                     continue;
                 }
 
-                method = FindTransformMethod(field.FieldType, predicate);
+                method = FindMethod(field.FieldType, predicate);
 
                 if (method != null)
                 {
@@ -222,8 +306,13 @@ namespace HHG.GoogleSheets.Editor
 
         private static bool IsValidFieldType(System.Type fieldType)
         {
-            return !fieldType.IsPrimitive && !fieldType.IsEnum && fieldType != typeof(string) && !typeof(Object).IsAssignableFrom(fieldType) && 
+            return !fieldType.IsPrimitive && !fieldType.IsEnum && fieldType != typeof(string) && !typeof(Object).IsAssignableFrom(fieldType) &&
                   ((fieldType.GetElementType() ?? fieldType.GetGenericArguments().FirstOrDefault()) is not System.Type subType || IsValidFieldType(subType));
+        }
+
+        private static IEnumerable<System.Type> GetSelectedScriptableObjectSheetTypes()
+        {
+            return Selection.objects.OfType<ScriptableObject>().Select(so => so.GetType()).Distinct().Where(t => t.GetCustomAttribute<SheetAttribute>() != null);
         }
 
         private static IEnumerable<System.Type> GetAllScriptableObjectSheetTypes()
@@ -233,29 +322,39 @@ namespace HHG.GoogleSheets.Editor
 
         private static ScriptableObject FindScriptableObjectByName(System.Type type, string name)
         {
-            string[] guids = AssetDatabase.FindAssets($"t:{type.Name}");
-
-            foreach (string guid in guids)
+            if (!loaded.Contains(type))
             {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                ScriptableObject so = AssetDatabase.LoadAssetAtPath(path, type) as ScriptableObject;
+                loaded.Add(type);
+                string[] guids = AssetDatabase.FindAssets($"t:{type.Name}");
 
-                if (so.name == name)
+                foreach (string guid in guids)
                 {
-                    return so;
+                    string path = AssetDatabase.GUIDToAssetPath(guid);
+                    ScriptableObject so = AssetDatabase.LoadAssetAtPath(path, type) as ScriptableObject;
+                    cache[name] = so;
                 }
             }
 
-            return null;
+            if (!cache.ContainsKey(name))
+            {
+                cache[name] = null;
+                Debug.LogWarning($"No ScriptableObject of type {type.Name} found with name '{name}'");
+            }
+
+            return cache[name];
         }
 
-        private static void InvokeSheetImportedCallbacks()
+        private static void InvokeSheetImportedCallbacks(string spreadsheetId, string gid)
         {
             foreach (System.Type type in System.AppDomain.CurrentDomain.GetAssemblies().SelectMany(a => a.GetTypes()))
             {
                 foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
                 {
-                    if (method.GetCustomAttribute<SheetImportedCallbackAttribute>() != null)
+                    SheetImportedCallbackAttribute attr = method.GetCustomAttribute<SheetImportedCallbackAttribute>();
+
+                    if (attr != null && 
+                        (string.IsNullOrEmpty(attr.SpreadsheetId) || attr.SpreadsheetId == spreadsheetId) && 
+                        (attr.Gids == null || attr.Gids.Length == 0 || attr.Gids.IndexOf(gid) >= 0))
                     {
                         method.Invoke(null, null);
                     }

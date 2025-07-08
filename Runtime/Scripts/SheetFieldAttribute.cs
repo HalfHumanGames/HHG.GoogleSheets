@@ -7,11 +7,13 @@ namespace HHG.GoogleSheets.Runtime
     {
         public string ColumnName { get; }
         public string TransformMethod { get; }
+        public string AdapterMethod { get; }
 
-        public SheetFieldAttribute(string columnName = null, string transformMethod = null)
+        public SheetFieldAttribute(string columnName = null, string transformMethod = null, string adapterMethod = null)
         {
             ColumnName = columnName;
             TransformMethod = transformMethod;
+            AdapterMethod = adapterMethod;
         }
     }
 }

@@ -3,19 +3,19 @@ using System;
 namespace HHG.GoogleSheets.Runtime
 {
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
-    public class SheetTransformAttribute : Attribute, ISheetMethod
+    public class SheetAdapterAttribute : Attribute, ISheetMethod
     {
         public string ColumnName { get; }
         public Type FieldType { get; }
 
-        public SheetTransformAttribute(string columnName)
+        public SheetAdapterAttribute(string columnName)
         {
             ColumnName = columnName;
         }
 
-        public SheetTransformAttribute(Type fieldType)
+        public SheetAdapterAttribute(Type fieldType)
         {
-             FieldType = fieldType;
+            FieldType = fieldType;
         }
-    } 
+    }
 }

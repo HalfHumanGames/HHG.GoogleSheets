@@ -1,6 +1,6 @@
+using HHG.Common.Runtime;
 using System.Text;
 using System.Text.RegularExpressions;
-using UnityEditor;
 
 namespace HHG.GoogleSheets.Runtime
 {
@@ -32,7 +32,7 @@ namespace HHG.GoogleSheets.Runtime
                     return ToSnakeCase(input);
 
                 case Case.Nicified:
-                    return ObjectNames.NicifyVariableName(input);
+                    return input.ToNicified();
 
                 default:
                     return input;

@@ -86,13 +86,15 @@ namespace HHG.GoogleSheets.Editor
                 imported.Add(new Sheet(attr.SpreadsheetId, attr.Gid));
             }
 
+            // Save Assets vefore invoke callbacks
+            AssetDatabase.SaveAssets();
+
             foreach (Sheet sheet in imported)
             {
                 InvokeSheetImportedCallbacks(sheet.SpreadsheetId, sheet.Gid);
             }
 
-            AssetDatabase.SaveAssets();
-            Debug.Log("✅ All Google Sheets imported!");
+            Debug.Log("All Google Sheets imported!");
         }
 
         private static string DownloadSheetCSV(string spreadsheetId, string gid)
@@ -144,7 +146,7 @@ namespace HHG.GoogleSheets.Editor
 
                 if (scriptableObject == null)
                 {
-                    Debug.LogWarning($"No ScriptableObject found for {type.Name} named '{name}'");
+                    Debug.LogWarning($"No {type.Name} named '{name}' found.");
                     continue;
                 }
 
@@ -273,7 +275,8 @@ namespace HHG.GoogleSheets.Editor
 
         private static MethodInfo FindMethod<T>(System.Type contextType, System.Func<T, bool> predicate) where T : System.Attribute, ISheetMethod
         {
-            MethodInfo[] methods = contextType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            // Make sure to flatten to also include base methods
+            MethodInfo[] methods = contextType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.FlattenHierarchy);
 
             MethodInfo method = methods.FirstOrDefault(m =>
             {
@@ -286,6 +289,7 @@ namespace HHG.GoogleSheets.Editor
                 return method;
             }
 
+            // No need to flatten the fields since this is recursive
             foreach (FieldInfo field in contextType.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
             {
                 if (!IsValidFieldType(field.FieldType))
@@ -325,21 +329,16 @@ namespace HHG.GoogleSheets.Editor
             if (!loaded.Contains(type))
             {
                 loaded.Add(type);
-                string[] guids = AssetDatabase.FindAssets($"t:{type.Name}");
 
-                foreach (string guid in guids)
+                foreach (string guid in AssetDatabase.FindAssets($"t:{type.Name}"))
                 {
                     string path = AssetDatabase.GUIDToAssetPath(guid);
-                    ScriptableObject so = AssetDatabase.LoadAssetAtPath(path, type) as ScriptableObject;
-                    cache[name] = so;
+                    ScriptableObject scriptableObject = AssetDatabase.LoadAssetAtPath(path, type) as ScriptableObject;
+                    cache[scriptableObject.name] = scriptableObject;
                 }
             }
 
-            if (!cache.ContainsKey(name))
-            {
-                cache[name] = null;
-                Debug.LogWarning($"No ScriptableObject of type {type.Name} found with name '{name}'");
-            }
+            if (!cache.ContainsKey(name)) cache[name] = null;
 
             return cache[name];
         }

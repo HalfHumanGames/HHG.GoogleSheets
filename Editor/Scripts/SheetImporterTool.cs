@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using UnityEditor;
 using UnityEngine;
 
@@ -12,6 +13,7 @@ namespace HHG.GoogleSheets.Editor
 {
     public class SheetImporterTool : EditorWindow
     {
+        private static HashSet<int> visited = new HashSet<int>();
         private static HashSet<System.Type> loaded = new HashSet<System.Type>();
         private static Dictionary<string, ScriptableObject> cache = new Dictionary<string, ScriptableObject>();
 
@@ -150,6 +152,7 @@ namespace HHG.GoogleSheets.Editor
                     continue;
                 }
 
+                visited.Clear();
                 ApplyFieldsRecursive(scriptableObject, row, type, scriptableObject, casing, arrayTracker);
                 EditorUtility.SetDirty(scriptableObject);
             }
@@ -157,6 +160,11 @@ namespace HHG.GoogleSheets.Editor
 
         private static void ApplyFieldsRecursive(object instance, Dictionary<string, string> row, System.Type type, object rootContext, Case casing, Dictionary<string, int> arrayTracker)
         {
+            // Track visited fields to prevent stack overflow
+            // caused from an indefinite recursion loop
+            int hash = RuntimeHelpers.GetHashCode(instance);
+            if (!visited.Add(hash)) return;
+
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
                 SheetFieldAttribute attr = field.GetCustomAttribute<SheetFieldAttribute>();
@@ -289,7 +297,8 @@ namespace HHG.GoogleSheets.Editor
                 return method;
             }
 
-            // No need to flatten the fields since this is recursive
+            // No need to flatten the fields since they use recursion
+            // intead since it's more performant in this scenario
             foreach (FieldInfo field in contextType.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
             {
                 if (!IsValidFieldType(field.FieldType))

@@ -175,17 +175,15 @@ namespace HHG.GoogleSheets.Editor
                     int index = arrayTracker.GetValueOrDefault(columnName);
                     bool increment = false;
 
-                    if (row.TryGetValue(columnName, out string contents) ||
-                       (increment = row.TryGetValue($"{columnName} {index}", out contents)))
+                    if (row.TryGetValue(columnName, out string contents) || (increment = row.TryGetValue($"{columnName} {index}", out contents)))
                     {
                         object value = ConvertValue(columnName, contents, field.FieldType, attr.TransformMethod, rootContext.GetType());
                         SetValue(columnName, contents, field.FieldType, attr.AdapterMethod, rootContext.GetType(), field, instance, value);
-
-                        if (increment)
-                        {
-                            arrayTracker[columnName] = index + 1;
-                        }
                     }
+
+                    // Always increment even if unset
+                    // since arrays may skip indices
+                    arrayTracker[columnName] = index + 1;
                 }
                 else if (IsValidFieldType(field.FieldType) && field.GetValue(instance) is object obj)
                 {

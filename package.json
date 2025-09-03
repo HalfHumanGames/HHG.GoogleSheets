@@ -1,6 +1,6 @@
 {
   "name": "com.halfhumangames.googlesheets",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "displayName": "HHG - Google Sheets",
   "description": "Google Sheets integration for Unity",
   "unity": "2020.3",
@@ -17,6 +17,6 @@
     "url": "https://github.com/HalfHumanGames"
   },
   "dependencies": {
-    "com.halfhumangames.common": "1.0.0"
+    "com.halfhumangames.common": "1.0.1"
   }
 }
